@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+  <title>Follow-ups</title>
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="theme-color" content="#0D0F12" />
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+    body { background: #0D0F12; color: #E2E4EC; font-family: -apple-system, 'Inter', system-ui, sans-serif; min-height: 100vh; }
+    #app { max-width: 480px; margin: 0 auto; position: relative; min-height: 100vh; }
+
+    /* Header */
+    #header { padding: 20px 16px 12px; border-bottom: 1px solid #1C1F2A; position: sticky; top: 0; background: #0D0F12; z-index: 10; }
+    #header-top { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 14px; }
+    #date-label { font-size: 11px; color: #555B70; letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 3px; }
+    #page-title { font-size: 20px; font-weight: 600; letter-spacing: -0.03em; line-height: 1; }
+    #clear-btn { background: none; border: 1px solid #1C1F2A; color: #555B70; border-radius: 6px; padding: 5px 10px; font-size: 12px; cursor: pointer; display: none; }
+    #input-row { display: flex; gap: 8px; }
+    #capture-input { flex: 1; background: #161920; border: 1px solid #252830; border-radius: 8px; padding: 11px 14px; color: #E2E4EC; font-size: 15px; outline: none; font-family: inherit; }
+    #capture-input::placeholder { color: #383C4E; }
+    #add-btn { background: #2D5BE3; border: none; border-radius: 8px; width: 42px; height: 42px; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+
+    /* List */
+    #list { padding: 4px 16px 120px; }
+    .empty-state { text-align: center; color: #2E3245; font-size: 14px; padding: 56px 0; }
+
+    /* Workstream group */
+    .ws-group { margin-top: 6px; }
+    .ws-header { font-size: 10px; color: #555B70; text-transform: uppercase; letter-spacing: 0.1em; padding: 14px 0 5px; }
+
+    /* Item */
+    .item { display: flex; align-items: flex-start; gap: 10px; padding: 11px 0 11px 10px; border-bottom: 1px solid #161920; border-left: 2px solid transparent; transition: opacity 0.15s; }
+    .item.done { opacity: 0.35; }
+    .item.p-high  { border-left-color: #EF6B6B; }
+    .item.p-medium { border-left-color: #EFA35B; }
+    .item.p-low   { border-left-color: #5BC4EF; }
+    .check-btn { width: 18px; height: 18px; border-radius: 4px; border: 1.5px solid #2E3245; background: transparent; cursor: pointer; flex-shrink: 0; margin-top: 2px; display: flex; align-items: center; justify-content: center; transition: all 0.15s; }
+    .check-btn.checked { background: #2D5BE3; border-color: #2D5BE3; }
+    .item-body { flex: 1; }
+    .item-text { font-size: 14px; line-height: 1.45; }
+    .item.done .item-text { text-decoration: line-through; }
+    .item-meta { display: flex; align-items: center; gap: 6px; margin-top: 3px; }
+    .item-time { font-size: 11px; color: #555B70; }
+    .item-priority-label { font-size: 11px; }
+    .del-btn { background: none; border: none; color: #2E3245; cursor: pointer; font-size: 20px; line-height: 1; padding: 0 2px; flex-shrink: 0; }
+
+    /* Triage CTA */
+    #triage-footer { position: fixed; bottom: 0; left: 50%; transform: translateX(-50%); width: 100%; max-width: 480px; padding: 12px 16px 28px; background: linear-gradient(to top, #0D0F12 70%, transparent); display: none; }
+    #triage-btn { width: 100%; background: #2D5BE3; border: none; border-radius: 10px; padding: 14px; color: white; font-size: 15px; font-weight: 500; cursor: pointer; font-family: inherit; letter-spacing: -0.01em; transition: background 0.2s, opacity 0.2s; }
+    #triage-btn:disabled { background: #161920; color: #555B70; cursor: not-allowed; }
+
+    /* Triage results */
+    #triage-result { padding: 0 16px 16px; display: none; }
+    .result-summary { background: #161920; border-radius: 10px; padding: 14px 16px; margin-bottom: 14px; }
+    .result-label { font-size: 10px; color: #555B70; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 7px; }
+    .result-summary-text { font-size: 14px; line-height: 1.55; color: #B8BACC; }
+    .result-ws-header { font-size: 10px; color: #555B70; text-transform: uppercase; letter-spacing: 0.1em; padding-bottom: 7px; margin-bottom: 8px; border-bottom: 1px solid #1C1F2A; }
+    .result-ws-group { margin-bottom: 18px; }
+    .result-item { background: #161920; border-radius: 10px; padding: 13px 15px; margin-bottom: 8px; }
+    .result-item-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; margin-bottom: 6px; }
+    .result-item-text { font-size: 13px; color: #E2E4EC; flex: 1; line-height: 1.4; }
+    .priority-badge { font-size: 10px; padding: 2px 7px; border-radius: 4px; flex-shrink: 0; font-weight: 600; letter-spacing: 0.05em; }
+    .result-next { font-size: 13px; color: #6B7080; line-height: 1.4; }
+    .result-flag { font-size: 12px; color: #EFA35B; margin-top: 6px; }
+    .error-msg { color: #EF6B6B; font-size: 14px; padding: 8px 0; }
+
+    /* Status */
+    #status { font-size: 12px; color: #555B70; text-align: center; padding: 8px 0 0; min-height: 20px; }
+  </style>
+</head>
+<body>
+<div id="app">
+  <div id="header">
+    <div id="header-top">
+      <div>
+        <div id="date-label"></div>
+        <div id="page-title">Follow-ups</div>
+      </div>
+      <button id="clear-btn" onclick="clearAll()">Clear all</button>
+    </div>
+    <div id="input-row">
+      <input id="capture-input" type="text" placeholder="Quick note from the meeting…" autocomplete="off" autocorrect="off" />
+      <button id="add-btn" onclick="addItem()">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1v12M1 7h12" stroke="white" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+    <div id="status"></div>
+  </div>
+
+  <div id="list"></div>
+  <div id="triage-result"></div>
+
+  <div id="triage-footer">
+    <button id="triage-btn" onclick="triage()">Triage</button>
+  </div>
+</div>
+
+<script>
+  // ── Config ─────────────────────────────────────────────────────────────────
+  // Supabase migration (already applied):
+  // ALTER TABLE captures ADD COLUMN IF NOT EXISTS workstream text;
+  // ALTER TABLE captures ADD COLUMN IF NOT EXISTS priority text;
+
+  const SUPABASE_URL = "https://vaadgbsygucdcbqwhmqd.supabase.co";
+  const SUPABASE_KEY = "sb_publishable_4TRqb2c8JdRJziNV81dosw_9fZ3H6Tg";
+  const db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+  const P_COLOR = { High: "#EF6B6B", Medium: "#EFA35B", Low: "#5BC4EF" };
+
+  let items = [];
+
+  // ── Init ───────────────────────────────────────────────────────────────────
+  document.getElementById("date-label").textContent = new Date().toLocaleDateString("en-SG", { weekday: "long", day: "numeric", month: "short" });
+  document.getElementById("capture-input").addEventListener("keydown", e => { if (e.key === "Enter") addItem(); });
+
+  async function init() {
+    setStatus("Loading…");
+    const { data, error } = await db.from("captures").select("*").order("created_at", { ascending: false });
+    if (error) { setStatus("Could not load — check connection"); return; }
+    items = data || [];
+    render();
+    setStatus("");
+  }
+
+  // ── CRUD ───────────────────────────────────────────────────────────────────
+  async function addItem() {
+    const input = document.getElementById("capture-input");
+    const text = input.value.trim();
+    if (!text) return;
+    input.value = "";
+
+    const timestamp = new Date().toLocaleTimeString("en-SG", { hour: "2-digit", minute: "2-digit" });
+    setStatus("Saving…");
+    const { data, error } = await db.from("captures").insert({ text, timestamp, done: false }).select().single();
+    if (error) { setStatus("Save failed"); return; }
+    items.unshift(data);
+    render();
+    setStatus("");
+    document.getElementById("triage-result").style.display = "none";
+    document.getElementById("capture-input").focus();
+  }
+
+  async function toggleDone(id) {
+    const item = items.find(i => i.id === id);
+    if (!item) return;
+    const { error } = await db.from("captures").update({ done: !item.done }).eq("id", id);
+    if (!error) { item.done = !item.done; render(); }
+  }
+
+  async function deleteItem(id) {
+    const { error } = await db.from("captures").delete().eq("id", id);
+    if (!error) { items = items.filter(i => i.id !== id); render(); }
+  }
+
+  async function clearAll() {
+    if (!confirm("Clear all follow-ups?")) return;
+    const { error } = await db.from("captures").delete().neq("id", 0);
+    if (!error) { items = []; render(); document.getElementById("triage-result").style.display = "none"; }
+  }
+
+  // ── API Key ────────────────────────────────────────────────────────────────
+  function getApiKey() {
+    return localStorage.getItem("anthropic_api_key") || "";
+  }
+
+  function promptForApiKey() {
+    const existing = getApiKey();
+    const key = prompt("Enter your Anthropic API key (stored locally on this device only):", existing);
+    if (key && key.trim()) {
+      localStorage.setItem("anthropic_api_key", key.trim());
+      return key.trim();
+    }
+    return null;
+  }
+
+  // ── Triage ─────────────────────────────────────────────────────────────────
+  async function triage() {
+    const active = items.filter(i => !i.done);
+    if (!active.length) return;
+
+    let apiKey = getApiKey();
+    if (!apiKey) {
+      apiKey = promptForApiKey();
+      if (!apiKey) return;
+    }
+
+    const btn = document.getElementById("triage-btn");
+    btn.disabled = true;
+    btn.textContent = "Triaging…";
+    document.getElementById("triage-result").style.display = "none";
+
+    const prompt = `You are a practical meeting notes organiser. Triage these follow-up items.
+
+For each item:
+- workstream: infer from explicit context clues in the text — project name, team, topic. Keep it short (2–4 words). Use "General" only if there are genuinely no clues.
+- priority: "High", "Medium", or "Low" — based only on what is stated or clearly implied in the note. Do not infer urgency beyond what is written.
+- next_step: one concrete action that follows directly from the note. Do not add steps that aren't implied.
+- flag: a short warning only if the note explicitly mentions a blocker or deadline. Otherwise null.
+
+Items:
+${active.map(item => `[id:${item.id}] [${item.timestamp}] ${item.text}`).join("\n")}
+
+Write a 1–2 sentence factual summary of what is open. Do not editorialize.
+
+Respond ONLY with valid JSON, no markdown, no preamble:
+{
+  "summary": "...",
+  "items": [
+    { "id": <number>, "workstream": "...", "priority": "High|Medium|Low", "next_step": "...", "flag": "..." }
+  ]
+}`;
+
+    try {
+      const response = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+          "anthropic-dangerous-direct-browser-access": "true"
+        },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-6",
+          max_tokens: 1000,
+          messages: [{ role: "user", content: prompt }]
+        })
+      });
+
+      const data = await response.json();
+
+      if (data.error) {
+        if (data.error.type === "authentication_error") {
+          localStorage.removeItem("anthropic_api_key");
+          renderTriageError("Invalid API key — tap Triage again to re-enter it.");
+        } else {
+          renderTriageError(data.error.message || "Triage failed — try again.");
+        }
+        btn.disabled = false;
+        updateTriageBtn();
+        return;
+      }
+
+      const rawText = data.content.map(b => b.text || "").join("");
+      const result = JSON.parse(rawText.replace(/```json|```/g, "").trim());
+
+      // Write workstream + priority back to Supabase and local items
+      setStatus("Saving…");
+      for (const triaged of result.items) {
+        const item = items.find(i => i.id === triaged.id);
+        if (!item) continue;
+        item.workstream = triaged.workstream;
+        item.priority = triaged.priority;
+        await db.from("captures").update({
+          workstream: triaged.workstream,
+          priority: triaged.priority
+        }).eq("id", triaged.id);
+      }
+      setStatus("");
+
+      render();
+      renderTriage(result);
+
+    } catch (e) {
+      renderTriageError("Triage failed — try again.");
+    }
+
+    btn.disabled = false;
+    updateTriageBtn();
+  }
+
+  // ── Render ─────────────────────────────────────────────────────────────────
+  function groupByWorkstream(itemList) {
+    const groups = {};
+    for (const item of itemList) {
+      const ws = item.workstream || "Uncategorised";
+      if (!groups[ws]) groups[ws] = [];
+      groups[ws].push(item);
+    }
+    const keys = Object.keys(groups).filter(k => k !== "Uncategorised").sort();
+    if (groups["Uncategorised"]) keys.push("Uncategorised");
+    return { groups, keys };
+  }
+
+  function render() {
+    const list = document.getElementById("list");
+    const activeCount = items.filter(i => !i.done).length;
+
+    document.getElementById("clear-btn").style.display = items.length ? "block" : "none";
+
+    if (items.length === 0) {
+      list.innerHTML = '<div class="empty-state">Nothing captured yet</div>';
+    } else {
+      const hasWorkstreams = items.some(i => i.workstream);
+
+      if (hasWorkstreams) {
+        const { groups, keys } = groupByWorkstream(items);
+        list.innerHTML = keys.map(ws => `
+          <div class="ws-group">
+            <div class="ws-header">${escHtml(ws)}</div>
+            ${groups[ws].map(item => itemHtml(item)).join("")}
+          </div>
+        `).join("");
+      } else {
+        list.innerHTML = items.map(item => itemHtml(item)).join("");
+      }
+    }
+
+    updateTriageBtn();
+  }
+
+  function itemHtml(item) {
+    const pClass = item.priority ? `p-${item.priority.toLowerCase()}` : "";
+    const pColor = P_COLOR[item.priority] || "";
+    return `
+      <div class="item ${item.done ? "done" : ""} ${pClass}" id="item-${item.id}">
+        <button class="check-btn ${item.done ? "checked" : ""}" onclick="toggleDone(${item.id})">
+          ${item.done ? `<svg width="9" height="7" viewBox="0 0 9 7" fill="none"><path d="M1 3.5l2.5 2.5 5-5" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>` : ""}
+        </button>
+        <div class="item-body">
+          <div class="item-text">${escHtml(item.text)}</div>
+          <div class="item-meta">
+            <span class="item-time">${escHtml(item.timestamp)}</span>
+            ${item.priority ? `<span class="item-priority-label" style="color:${pColor}">${item.priority}</span>` : ""}
+          </div>
+        </div>
+        <button class="del-btn" onclick="deleteItem(${item.id})">×</button>
+      </div>
+    `;
+  }
+
+  function updateTriageBtn() {
+    const activeCount = items.filter(i => !i.done).length;
+    const footer = document.getElementById("triage-footer");
+    const btn = document.getElementById("triage-btn");
+    if (activeCount > 0) {
+      footer.style.display = "block";
+      if (!btn.disabled) btn.textContent = `Triage ${activeCount} item${activeCount !== 1 ? "s" : ""}`;
+    } else {
+      footer.style.display = "none";
+    }
+  }
+
+  function renderTriage(result) {
+    const el = document.getElementById("triage-result");
+
+    // Group result items by workstream
+    const groups = {};
+    for (const triaged of result.items) {
+      const ws = triaged.workstream || "General";
+      if (!groups[ws]) groups[ws] = [];
+      const original = items.find(i => i.id === triaged.id);
+      groups[ws].push({ ...triaged, originalText: original ? original.text : "" });
+    }
+    const wsKeys = Object.keys(groups).filter(k => k !== "General").sort();
+    if (groups["General"]) wsKeys.push("General");
+
+    el.innerHTML = `
+      <div class="result-summary">
+        <div class="result-label">Summary</div>
+        <div class="result-summary-text">${escHtml(result.summary)}</div>
+      </div>
+      ${wsKeys.map(ws => `
+        <div class="result-ws-group">
+          <div class="result-ws-header">${escHtml(ws)}</div>
+          ${groups[ws].map(item => `
+            <div class="result-item" style="border-left: 3px solid ${P_COLOR[item.priority] || "#2D5BE3"}">
+              <div class="result-item-header">
+                <div class="result-item-text">${escHtml(item.originalText)}</div>
+                <span class="priority-badge" style="background:${P_COLOR[item.priority]}18; color:${P_COLOR[item.priority]}">${item.priority}</span>
+              </div>
+              <div class="result-next">→ ${escHtml(item.next_step)}</div>
+              ${item.flag ? `<div class="result-flag">⚠ ${escHtml(item.flag)}</div>` : ""}
+            </div>
+          `).join("")}
+        </div>
+      `).join("")}
+    `;
+    el.style.display = "block";
+  }
+
+  function renderTriageError(msg) {
+    const el = document.getElementById("triage-result");
+    el.innerHTML = `<div class="error-msg">${escHtml(msg || "Triage failed — try again.")}</div>`;
+    el.style.display = "block";
+  }
+
+  function setStatus(msg) {
+    document.getElementById("status").textContent = msg;
+  }
+
+  function escHtml(str) {
+    return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+
+  init();
+</script>
+</body>
+</html>
