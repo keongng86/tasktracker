@@ -208,7 +208,8 @@
         <div id="page-title">Follow-ups</div>
       </div>
       <div class="hdr-actions">
-        <button id="toggle-done-btn" class="hdr-btn" onclick="toggleHideDone()" style="display:none">Hide done</button>
+        <button id="toggle-done-btn" class="hdr-btn" onclick="toggleHideDone()" style="display:none">Show done</button>
+        <button id="purge-btn" class="hdr-btn" onclick="purgeOld()" style="display:none">Purge</button>
         <button id="clear-btn" class="hdr-btn" onclick="clearAll()" style="display:none">Clear all</button>
       </div>
     </div>
@@ -266,6 +267,9 @@
   // ALTER TABLE captures ADD COLUMN IF NOT EXISTS deadline text;
   // ALTER TABLE captures ADD COLUMN IF NOT EXISTS estimated_time text;
   // ALTER TABLE captures ADD COLUMN IF NOT EXISTS actual_time text;
+  // ALTER TABLE captures ADD COLUMN IF NOT EXISTS archived boolean NOT NULL DEFAULT false;
+  // ALTER TABLE captures ADD COLUMN IF NOT EXISTS done_at timestamptz;
+  // ALTER TABLE captures ADD COLUMN IF NOT EXISTS raw_text text;
 
   const SUPABASE_URL = "https://vaadgbsygucdcbqwhmqd.supabase.co";
   const SUPABASE_KEY = "sb_publishable_4TRqb2c8JdRJziNV81dosw_9fZ3H6Tg";
@@ -276,7 +280,7 @@
 
   let items = [];
   let currentSort = null;
-  let hideDone = false;
+  let hideDone = true;
   let triageRun = false;
   let editingId = null;
 
@@ -286,7 +290,7 @@
 
   async function init() {
     setStatus("Loading…");
-    const { data, error } = await db.from("captures").select("*").order("created_at", { ascending: false });
+    const { data, error } = await db.from("captures").select("*").eq("archived", false).order("created_at", { ascending: false });
     if (error) { setStatus("Could not load — check connection"); return; }
     items = data || [];
     triageRun = items.some(i => i.workstream || i.priority);
@@ -312,7 +316,7 @@
     const timestamp = new Date().toLocaleTimeString("en-SG", { hour: "2-digit", minute: "2-digit" });
     setStatus("Saving…");
     const { data, error } = await db.from("captures").insert({
-      text, timestamp, done: false,
+      text, raw_text: text, timestamp, done: false,
       priority: presetPriority,
       estimated_time: presetTime
     }).select().single();
@@ -327,8 +331,8 @@
     const item = items.find(i => i.id === id);
     if (!item) return;
     if (item.done) {
-      const { error } = await db.from("captures").update({ done: false, actual_time: null }).eq("id", id);
-      if (!error) { item.done = false; item.actual_time = null; render(); }
+      const { error } = await db.from("captures").update({ done: false, actual_time: null, done_at: null }).eq("id", id);
+      if (!error) { item.done = false; item.actual_time = null; item.done_at = null; render(); }
     } else {
       showTimePicker(id);
     }
@@ -338,10 +342,10 @@
     removePicker();
     const item = items.find(i => i.id === id);
     if (!item) return;
-    const update = { done: true };
+    const update = { done: true, done_at: new Date().toISOString() };
     if (actualTime) update.actual_time = actualTime;
     const { error } = await db.from("captures").update(update).eq("id", id);
-    if (!error) { item.done = true; if (actualTime) item.actual_time = actualTime; render(); }
+    if (!error) { item.done = true; item.done_at = update.done_at; if (actualTime) item.actual_time = actualTime; render(); }
   }
 
   async function deleteItem(id) {
@@ -353,7 +357,7 @@
     if (!confirm("Clear all follow-ups?")) return;
     const { error } = await db.from("captures").delete().neq("id", 0);
     if (!error) {
-      items = []; triageRun = false; currentSort = null; hideDone = false;
+      items = []; triageRun = false; currentSort = null; hideDone = true;
       document.getElementById("sort-bar").classList.remove("visible");
       updateTriageResultVisibility();
       render();
@@ -366,6 +370,20 @@
     const btn = document.getElementById("toggle-done-btn");
     btn.textContent = hideDone ? "Show done" : "Hide done";
     btn.classList.toggle("active", hideDone);
+    render();
+  }
+
+  async function purgeOld() {
+    const cutoff = Date.now() - 7 * 86400000;
+    const eligible = items.filter(i => i.done && i.done_at && new Date(i.done_at).getTime() < cutoff);
+    if (!eligible.length) { setStatus("Nothing to purge — done items must be 7+ days old"); return; }
+    if (!confirm(`Archive ${eligible.length} completed item${eligible.length !== 1 ? "s" : ""} older than 7 days? They're kept for training data but won't appear in the app.`)) return;
+    setStatus("Purging…");
+    const ids = eligible.map(i => i.id);
+    const { error } = await db.from("captures").update({ archived: true }).in("id", ids);
+    if (error) { setStatus("Purge failed"); return; }
+    items = items.filter(i => !ids.includes(i.id));
+    setStatus("");
     render();
   }
 
@@ -420,10 +438,10 @@
     if (newText === item.text) { cancelEdit(); return; }
     setStatus("Saving…");
     const { error } = await db.from("captures").update({
-      text: newText, workstream: null, priority: null, deadline: null, estimated_time: null
+      text: newText, raw_text: newText, workstream: null, priority: null, deadline: null, estimated_time: null
     }).eq("id", id);
     if (!error) {
-      item.text = newText;
+      item.text = newText; item.raw_text = newText;
       item.workstream = null; item.priority = null; item.deadline = null; item.estimated_time = null;
     }
     setStatus("");
@@ -478,6 +496,7 @@ ${itemLines}
 
 For each item return:
 - id: numeric id as given
+- rewritten_text: rewrite the note into imperative to-do form (e.g. "Send Q3 deck to finance"). You may restructure and make an implicit ask explicit (e.g. "Mei mentioned budget concerns" → "Follow up with Mei re: budget concerns"). You must NOT introduce any person, date, or action that is not present in the original note. If the note is already a clean imperative action, return it close to as-is.
 - workstream: infer from explicit context clues (project name, team, topic). 2–4 words. Use "General" only if there are genuinely no clues.
 - priority: "High", "Medium", or "Low". Distinguish urgency from importance — a tight deadline alone does not make something High priority if the task itself is not important. If an item has a preset priority, respect it unless the special instructions say otherwise.
 - deadline: if mentioned, return as ISO date string (YYYY-MM-DD) relative to today (${todayISO}). null if none mentioned.
@@ -491,7 +510,7 @@ Respond ONLY with valid JSON, no markdown, no preamble:
 {
   "summary": "...",
   "items": [
-    { "id": <number>, "workstream": "...", "priority": "High|Medium|Low", "deadline": "YYYY-MM-DD or null", "estimated_time": "...", "next_step": "...", "flag": "..." }
+    { "id": <number>, "rewritten_text": "...", "workstream": "...", "priority": "High|Medium|Low", "deadline": "YYYY-MM-DD or null", "estimated_time": "...", "next_step": "...", "flag": "..." }
   ]
 }`;
 
@@ -516,11 +535,13 @@ Respond ONLY with valid JSON, no markdown, no preamble:
       for (const t of result.items) {
         const item = items.find(i => i.id === t.id);
         if (!item) continue;
+        const newText = t.rewritten_text || item.text;
+        item.text = newText;
         item.workstream = t.workstream;
         item.priority = t.priority;
         item.deadline = t.deadline || null;
         item.estimated_time = t.estimated_time;
-        await db.from("captures").update({ workstream: t.workstream, priority: t.priority, deadline: t.deadline || null, estimated_time: t.estimated_time }).eq("id", t.id);
+        await db.from("captures").update({ text: newText, workstream: t.workstream, priority: t.priority, deadline: t.deadline || null, estimated_time: t.estimated_time }).eq("id", t.id);
       }
       setStatus("");
 
@@ -595,9 +616,12 @@ Respond ONLY with valid JSON, no markdown, no preamble:
   function render() {
     const list = document.getElementById("list");
     const hasDone = items.some(i => i.done);
+    const purgeCutoff = Date.now() - 7 * 86400000;
+    const purgeable = items.some(i => i.done && i.done_at && new Date(i.done_at).getTime() < purgeCutoff);
 
     document.getElementById("clear-btn").style.display = items.length ? "block" : "none";
     document.getElementById("toggle-done-btn").style.display = hasDone ? "block" : "none";
+    document.getElementById("purge-btn").style.display = purgeable ? "block" : "none";
 
     const visible = hideDone ? items.filter(i => !i.done) : items;
 
